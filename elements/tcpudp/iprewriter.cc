@@ -2,6 +2,8 @@
  * iprewriter.{cc,hh} -- rewrites packet source and destination
  * Max Poletto, Eddie Kohler
  *
+ * 
+ *
  * Copyright (c) 2000 Massachusetts Institute of Technology
  * Copyright (c) 2008-2010 Meraki, Inc.
  *
@@ -127,6 +129,24 @@ IPRewriter::push(int port, Packet *p_in)
 	return;
     }
 
+    // SNF: Decrement IP TTL!
+    // Do it here, before jumping to either UDP or TCP
+    if ( _dec_ip_ttl ) {
+	// Safe decrement
+	if ( iph->ip_ttl > 1 ) {
+	    iph->ip_ttl --;
+	    // Checksum is not mandatory anymore
+	    if ( _calc_checksum ) {
+		unsigned long sum = (~ntohs(iph->ip_sum) & 0xFFFF) + 0xFEFF;
+		iph->ip_sum = ~htons(sum + (sum >> 16));
+	    }
+	}
+	// End flow if TTL is 0
+	else {
+	    return;
+	}
+    }
+
     IPFlowID flowid(p);
     HashContainer<IPRewriterEntry> *map = (iph->ip_p == IP_PROTO_TCP ? &_map : &_udp_map);
     IPRewriterEntry *m = map->get(flowid);
@@ -135,8 +155,10 @@ IPRewriter::push(int port, Packet *p_in)
 	IPRewriterInput &is = _input_specs.unchecked_at(port);
 	IPFlowID rewritten_flowid = IPFlowID::uninitialized_t();
 	int result = is.rewrite_flowid(flowid, rewritten_flowid, p, iph->ip_p == IP_PROTO_TCP ? 0 : IPRewriterInput::mapid_iprewriter_udp);
-	if (result == rw_addmap)
+	if (result == rw_addmap) {
 	    m = IPRewriter::add_flow(iph->ip_p, flowid, rewritten_flowid, port);
+	    //print_flow_info(m, iph);
+	}
 	if (!m) {
 	    checked_output_push(result, p);
 	    return;
@@ -148,14 +170,14 @@ IPRewriter::push(int port, Packet *p_in)
     IPRewriterFlow *mf = m->flow();
     if (iph->ip_p == IP_PROTO_TCP) {
 	TCPFlow *tcpmf = static_cast<TCPFlow *>(mf);
-	tcpmf->apply(p, m->direction(), _annos);
+	tcpmf->apply(p, m->direction(), _annos, _calc_checksum);
 	if (_timeouts[1])
 	    tcpmf->change_expiry(_heap, true, now_j + _timeouts[1]);
 	else
 	    tcpmf->change_expiry(_heap, false, now_j + tcp_flow_timeout(tcpmf));
     } else {
 	UDPFlow *udpmf = static_cast<UDPFlow *>(mf);
-	udpmf->apply(p, m->direction(), _annos);
+	udpmf->apply(p, m->direction(), _annos, _calc_checksum);
 	if (_udp_timeouts[1])
 	    udpmf->change_expiry(_heap, true, now_j + _udp_timeouts[1]);
 	else

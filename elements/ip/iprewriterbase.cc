@@ -50,7 +50,6 @@ CLICK_DECLS
 //
 // IPMapper
 //
-
 void
 IPMapper::notify_rewriter(IPRewriterBase *, IPRewriterInput *, ErrorHandler *)
 {
@@ -66,9 +65,12 @@ IPMapper::rewrite_flowid(IPRewriterInput *, const IPFlowID &, IPFlowID &,
 //
 // IPRewriterBase
 //
-
 IPRewriterBase::IPRewriterBase()
-    : _map(0), _heap(new IPRewriterHeap), _gc_timer(gc_timer_hook, this)
+    : _map(0), _heap(new IPRewriterHeap), _gc_timer(gc_timer_hook, this),
+	_drop_bcast(false), _ipgw_opt(false), _fix_ip_src(false),
+	_ip_fragment(false), _dec_ip_ttl(false), _calc_checksum(true),
+	_my_ip(), _mtu(1500), _headroom(Packet::default_headroom),
+	_honor_df(true), _verbose(false)
 {
     _timeouts[0] = default_timeout;
     _timeouts[1] = default_guarantee;
@@ -158,8 +160,44 @@ IPRewriterBase::configure(Vector<String> &conf, ErrorHandler *errh)
 	.read("GUARANTEE", SecondsArg(), _timeouts[1])
 	.read("REAP_INTERVAL", SecondsArg(), _gc_interval_sec)
 	.read("REAP_TIME", Args::deprecated, SecondsArg(), _gc_interval_sec)
+	.read("DROP_BCAST", _drop_bcast)
+	.read("IPGW_OPTIONS", _ipgw_opt)
+	.read("FIX_IP_SRC", _fix_ip_src)
+	.read("DEC_IP_TTL", _dec_ip_ttl)
+	.read("IP_FRAGMENT", _ip_fragment)
+	.read("IP_OUT_COMBO", _ip_out_combo)
+	.read("CALC_CHECKSUM", _calc_checksum)
+	.read("MTU", _mtu)
+	.read("HEADROOM", _headroom)
+	.read("HONOR_DF", _honor_df)
+	.read("VERBOSE", _verbose)
 	.consume() < 0)
 	return -1;
+
+    // Combines all these elements
+    if ( _ip_out_combo ) {
+	_dec_ip_ttl = _fix_ip_src = _ipgw_opt = _drop_bcast = true;
+    }
+
+    // These elements modify parts of header space
+    if ( _ipgw_opt || _fix_ip_src || _dec_ip_ttl || _ip_out_combo ) {
+	_calc_checksum = true;
+    }
+
+    /*
+    click_chatter("\n");
+    click_chatter("   DEC_IP_TTL: %s", _dec_ip_ttl? "True":"False");
+    click_chatter("   DROP_BCAST: %s", _drop_bcast? "True":"False");
+    click_chatter(" IPGW_OPTIONS: %s", _ipgw_opt? "True":"False");
+    click_chatter("   FIX_IP_SRC: %s", _fix_ip_src? "True":"False");
+    click_chatter("  IP_FRAGMENT: %s", _ip_fragment? "True":"False");
+    click_chatter("CALC_CHECKSUM: %s", _calc_checksum? "True":"False");
+    click_chatter("     HONOR_DF: %s", _honor_df? "True":"False");
+    click_chatter("      VERBOSE: %s", _verbose? "True":"False");
+    click_chatter("     HEADROOM: %d", _headroom);
+    click_chatter("          MTU: %d", _mtu);
+    click_chatter("       IPADDR: %s", IPAddress(_my_ip).s().c_str());
+    */
 
     if (capacity_word) {
 	Element *e;
@@ -175,17 +213,39 @@ IPRewriterBase::configure(Vector<String> &conf, ErrorHandler *errh)
 	    return errh->error("bad MAPPING_CAPACITY");
     }
 
-    if (conf.size() != ninputs())
-	return errh->error("need %d arguments, one per input port", ninputs());
-
     _timeouts[0] *= CLICK_HZ;	// _timeouts is measured in jiffies
     _timeouts[1] *= CLICK_HZ;
 
+    bool has_ipaddr = false;
+    String ipaddr_pat = String("IPADDR");
     for (int i = 0; i < conf.size(); ++i) {
+	//click_chatter("Arg: %s", conf[i].c_str());
+
+	// IPADDR argument not handled above
+	int start_pos = conf[i].find_left(ipaddr_pat, 0);
+	if ( start_pos >= 0 ) {
+		has_ipaddr = true;
+		String ip = conf[i].substring(start_pos+ipaddr_pat.length()+1, -1);
+		//click_chatter("Found %s", ip.c_str());
+		_my_ip = IPAddress(ip).in_addr();
+		//click_chatter("       IPADDR: %s", IPAddress(_my_ip).s().c_str());
+		continue;
+	}
+
 	IPRewriterInput is;
 	if (parse_input_spec(conf[i], is, i, errh) >= 0)
 	    _input_specs.push_back(is);
     }
+
+    int extra_params = has_ipaddr? 1:0;
+    if ( conf.size()-extra_params != ninputs() )
+	return errh->error("need %d arguments, one per input port", ninputs());
+
+    if ( (_ip_fragment) && (_mtu < 8) )
+	return errh->error("MTU must be at least 8");
+
+    if ( (_ipgw_opt || _fix_ip_src) && (_my_ip != 0) )
+	return errh->error("IPGWOptions and/or FixIPSrc operations require IPADDR to be set");
 
     return _input_specs.size() == ninputs() ? 0 : -1;
 }
@@ -495,6 +555,22 @@ IPRewriterBase::llrpc(unsigned command, void *data)
 
     } else
 	return Element::llrpc(command, data);
+}
+
+void
+IPRewriterBase::print_flow_info(IPRewriterEntry *m, click_ip *iph)
+{
+    if (!m || !iph)
+	return;
+
+    click_chatter("---->        IP Proto: %d\n", iph->ip_p);
+    click_chatter("---->        Src   IP: %s\n", m->flowid().saddr().s().c_str());
+    click_chatter("---->        Src Port: %d\n", htons(m->flowid().sport()));
+    click_chatter("---->        Dst   IP: %s\n", m->flowid().daddr().s().c_str());
+    click_chatter("---->        Dst Port: %d\n", htons(m->flowid().dport()));
+    click_chatter("---->       Direction: %s\n", m->direction()? "Response":"Forward");
+    click_chatter("----> Forward Outport: %d\n", m->output());
+    click_chatter("\n");
 }
 
 ELEMENT_REQUIRES(IPRewriterMapping IPRewriterPattern)

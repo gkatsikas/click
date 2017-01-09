@@ -27,7 +27,7 @@
 CLICK_DECLS
 
 void
-UDPRewriter::UDPFlow::apply(WritablePacket *p, bool direction, unsigned annos)
+UDPRewriter::UDPFlow::apply(WritablePacket *p, bool direction, unsigned annos, bool calc_checksum)
 {
     assert(p->has_network_header());
     click_ip *iph = p->ip_header();
@@ -40,7 +40,11 @@ UDPRewriter::UDPFlow::apply(WritablePacket *p, bool direction, unsigned annos)
 	p->set_dst_ip_anno(revflow.saddr());
     if (direction && (annos & 2))
 	p->set_anno_u8(annos >> 2, _reply_anno);
-    update_csum(&iph->ip_sum, direction, _ip_csum_delta);
+
+    // SNF: Allow to skip IP checksum calculation
+    if ( calc_checksum ) {
+	update_csum(&iph->ip_sum, direction, _ip_csum_delta);
+    }
 
     // end if not first fragment
     if (!IP_FIRSTFRAG(iph))
@@ -55,8 +59,10 @@ UDPRewriter::UDPFlow::apply(WritablePacket *p, bool direction, unsigned annos)
 	    update_csum(&reinterpret_cast<click_tcp *>(udph)->th_sum, direction, _udp_csum_delta);
     } else if (iph->ip_p == IP_PROTO_UDP) {
 	if (p->transport_length() >= 8 && udph->uh_sum)
-	    // 0 checksum is no checksum
-	    update_csum(&udph->uh_sum, direction, _udp_csum_delta);
+	    // SNF: Allow to skip UDP checksum calculation
+	    if ( calc_checksum ) {
+		update_csum(&udph->uh_sum, direction, _udp_csum_delta);
+	    }
     }
 
     // track connection state
@@ -165,7 +171,7 @@ UDPRewriter::push(int port, Packet *p_in)
     }
 
     UDPFlow *mf = static_cast<UDPFlow *>(m->flow());
-    mf->apply(p, m->direction(), _annos);
+    mf->apply(p, m->direction(), _annos, _calc_checksum);
 
     click_jiffies_t now_j = click_jiffies();
     if (_timeouts[1])

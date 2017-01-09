@@ -7,7 +7,7 @@ CLICK_DECLS
 
 /*
  * =c
- * IPOutputCombo(COLOR, IPADDR, MTU)
+ * IPOutputCombo(COLOR, IPADDR, MTU, CALC_CHECKSUM)
  * =s ip
  * output combo for IP routing
  * =d
@@ -32,6 +32,11 @@ CLICK_DECLS
  * outputs for PaintTee, IPGWOptions, and DecIPTTL, respectively; and
  * output 4 is for packets longer than MTU.
  *
+ * =item CALC_CHECKSUM
+ * Boolean. If true, the element does not calculate the IP checksum,
+ * since it is assumed that a subsequent element will do so.
+ * Defaults to true.
+ *
  * =n
  *
  * IPOutputCombo does no fragmentation. You'll still need an IPFragmenter for
@@ -52,6 +57,7 @@ class IPOutputCombo : public Element {
   const char *processing() const		{ return PUSH; }
 
   int configure(Vector<String> &, ErrorHandler *) CLICK_COLD;
+  void add_handlers() CLICK_COLD;
 
   void push(int, Packet *);
 
@@ -60,7 +66,7 @@ class IPOutputCombo : public Element {
   int _color;			// PaintTee
   struct in_addr _my_ip;	// IPGWOptions, FixIPSrc
   unsigned _mtu;		// Fragmenter
-
+  bool _calc_checksum;          // Make the checksum calculation optional
 };
 
 CLICK_ENDDECLS

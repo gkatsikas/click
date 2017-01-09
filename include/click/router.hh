@@ -131,7 +131,14 @@ class Router { public:
     inline Router* hotswap_router() const;
     void set_hotswap_router(Router* router);
 
-    int initialize(ErrorHandler* errh);
+    /*
+     * SNF Modification to prevent Click from initializing the elements in this call.
+     * We simply want to have the Click DAG populated with all the elements and connections.
+     * The 2nd argument is set to false by default. This is how normal Click calls the function
+     * so it does not affect normal Click executions.
+     */
+    int initialize(ErrorHandler* errh, bool initialize_only_dag=false);
+
     void activate(bool foreground, ErrorHandler* errh);
     inline void activate(ErrorHandler* errh);
     inline void set_foreground(bool foreground);
@@ -297,6 +304,10 @@ class Router { public:
     Vector<String> _flow_code_override;
 
     Router* _next_router;
+
+    // SNF extension: If set to true, the router's elements are not initialized
+    // Router::initialize() and ~Router() use this field to properly set and reset the router
+    bool _do_not_initialize;
 
 #if CLICK_LINUXMODULE
     Vector<struct module*> _modules;

@@ -2,7 +2,10 @@
  * ipoutputcombo.{cc,hh} -- IP router output combination element
  * Eddie Kohler
  *
+ * Optional checksum calculation by Georgios Katsikas
+ *
  * Copyright (c) 1999-2000 Massachusetts Institute of Technology
+ * Copyright (c) 2016 KTH Royal Institute of Technology
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -24,6 +27,7 @@
 CLICK_DECLS
 
 IPOutputCombo::IPOutputCombo()
+    : _calc_checksum(true)
 {
 }
 
@@ -37,6 +41,7 @@ IPOutputCombo::configure(Vector<String> &conf, ErrorHandler *errh)
     return Args(conf, this, errh)
 	.read_mp("COLOR", _color)
 	.read_mp("IPADDR", _my_ip)
+	.read("CALC_CHECKSUM", _calc_checksum)
 	.read_mp("MTU", _mtu).complete();
 }
 
@@ -173,7 +178,7 @@ IPOutputCombo::push(int, Packet *p_in)
   }
 
   // IPGWOptions / FixIPSrc
-  if (do_cksum) {
+  if (do_cksum && _calc_checksum) {
     ip->ip_sum = 0;
     ip->ip_sum = click_in_cksum(p->data(), hlen);
   }
@@ -186,8 +191,11 @@ IPOutputCombo::push(int, Packet *p_in)
     ip->ip_ttl--;
     // 19.Aug.1999 - incrementally update IP checksum as suggested by SOSP
     // reviewers, according to RFC1141 and RFC1624
-    unsigned long sum = (~ntohs(ip->ip_sum) & 0xFFFF) + 0xFEFF;
-    ip->ip_sum = ~htons(sum + (sum >> 16));
+    // Do not calculate IP checksum if you are requested to do so
+    if (_calc_checksum) {
+        unsigned long sum = (~ntohs(ip->ip_sum) & 0xFFFF) + 0xFEFF;
+        ip->ip_sum = ~htons(sum + (sum >> 16));
+    }
   }
 
   // Fragmenter
@@ -202,6 +210,12 @@ IPOutputCombo::push(int, Packet *p_in)
  ipgw_send_error:
   SET_ICMP_PARAMPROB_ANNO(p, problem_offset);
   output(2).push(p);
+}
+
+void
+IPOutputCombo::add_handlers()
+{
+    add_data_handlers("calc_checksum", Handler::OP_READ | Handler::OP_WRITE | Handler::CHECKBOX, &_calc_checksum);
 }
 
 CLICK_ENDDECLS

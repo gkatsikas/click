@@ -140,6 +140,21 @@ class IPRewriterBase : public Element { public:
     uint32_t _gc_interval_sec;
     Timer _gc_timer;
 
+    // SNF extensions: IP Rewriter can possibly apply these operations
+    bool _drop_bcast;           // DropBroadcast
+    bool _ipgw_opt;             // IPGWOptions
+    bool _fix_ip_src;           // FixIPSrc
+    bool _ip_fragment;          // IPFragmenter
+    bool _dec_ip_ttl;           // DecIPTTL
+    bool _ip_out_combo;         // DropBroadcast + IPGWOptions + FixIPSrc + DecIPTTL
+    bool _calc_checksum;
+
+    struct in_addr _my_ip;      // For IPGWOptions, FixIPSrc
+    unsigned       _mtu;        // For IP Fragmenter
+    unsigned       _headroom;
+    bool           _honor_df;
+    bool           _verbose;
+
     enum {
 	default_timeout = 300,	   // 5 minutes
 	default_guarantee = 5,	   // 5 seconds
@@ -170,6 +185,8 @@ class IPRewriterBase : public Element { public:
 
     friend int IPRewriterInput::rewrite_flowid(const IPFlowID &flowid,
 			IPFlowID &rewritten_flowid, Packet *p, int mapid);
+
+    void print_flow_info(IPRewriterEntry *m, click_ip *iph);
 
   private:
 

@@ -24,7 +24,7 @@
 CLICK_DECLS
 
 DecIPTTL::DecIPTTL()
-    : _active(true), _multicast(true)
+    : _active(true), _multicast(true), _calc_checksum(true)
 {
     _drops = 0;
 }
@@ -37,8 +37,9 @@ int
 DecIPTTL::configure(Vector<String> &conf, ErrorHandler *errh)
 {
     return Args(conf, this, errh)
-	.read("ACTIVE", _active)
-	.read("MULTICAST", _multicast).complete();
+	.read("ACTIVE",        _active)
+	.read("CALC_CHECKSUM", _calc_checksum)
+	.read("MULTICAST",     _multicast).complete();
 }
 
 Packet *
@@ -51,6 +52,7 @@ DecIPTTL::simple_action(Packet *p)
     if (!_multicast && IPAddress(ip_in->ip_dst).is_multicast())
 	return p;
 
+    // Time to drop
     if (ip_in->ip_ttl <= 1) {
 	++_drops;
 	checked_output_push(1, p);
@@ -60,7 +62,13 @@ DecIPTTL::simple_action(Packet *p)
 	if (!q)
 	    return 0;
 	click_ip *ip = q->ip_header();
-	--ip->ip_ttl;
+
+	// Decrement
+	ip->ip_ttl --;
+
+	// SNF: Do not calculate IP checksum if you are requested to do so
+	if ( !_calc_checksum )
+		return q;
 
 	// 19.Aug.1999 - incrementally update IP checksum as suggested by SOSP
 	// reviewers, according to RFC1141, as updated by RFC1624.
@@ -81,6 +89,7 @@ DecIPTTL::add_handlers()
 {
     add_data_handlers("drops", Handler::OP_READ, &_drops);
     add_data_handlers("active", Handler::OP_READ | Handler::OP_WRITE | Handler::CHECKBOX, &_active);
+    add_data_handlers("calc_checksum", Handler::OP_READ | Handler::OP_WRITE | Handler::CHECKBOX, &_calc_checksum);
 }
 
 CLICK_ENDDECLS

@@ -62,6 +62,8 @@ class DecIPTTL : public Element { public:
     bool _active;
     bool _multicast;
 
+    // SNF: Make the Checksum calculation optional
+    bool _calc_checksum;
 };
 
 CLICK_ENDDECLS
