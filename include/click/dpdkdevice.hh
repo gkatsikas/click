@@ -22,6 +22,10 @@
 #include <rte_pci.h>
 #include <rte_version.h>
 
+#if RTE_VERSION >= RTE_VERSION_NUM(17,11,0,0)
+    #include <rte_bus_pci.h>
+#endif
+
 #include <click/packet.hh>
 #include <click/error.hh>
 #include <click/hashtable.hh>
@@ -155,7 +159,6 @@ private:
         return &(_devs.find_insert(port_id, DPDKDevice(port_id)).value());
     }
 
-
 #if RTE_VERSION < RTE_VERSION_NUM(18,05,0,0)
     static int get_port_from_pci(uint32_t domain, uint8_t bus, uint8_t dev_id, uint8_t function) {
        struct rte_eth_dev_info dev_info;
@@ -170,6 +173,7 @@ private:
               addr.function == function)
               return port_id;
        }
+
        return -1;
     }
 #endif
